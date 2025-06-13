@@ -1,0 +1,89 @@
+; N64 Controller Protocol PIO Program
+; Handles the precise timing requirements for N64 Joybus protocol
+; - Logic 0: 3μs low, 1μs high
+; - Logic 1: 1μs low, 3μs high
+; - Stop bit: 2μs low, 1μs high (controller response)
+
+.program n64_tx
+
+; Transmit a bit based on the value in OSR
+; 0 = Logic 0 (3μs low, 1μs high)
+; 1 = Logic 1 (1μs low, 3μs high)
+
+public entry_point:
+    out x, 1            ; Get bit from OSR into x
+    jmp !x, send_zero   ; If bit is 0, jump to send_zero
+    
+send_one:
+    set pins, 0 [7]     ; Drive low for 1μs (8 cycles at 125MHz / 16 = 1μs)
+    set pins, 1 [7]     ; Drive high for 1μs
+    set pins, 1 [7]     ; Drive high for 1μs
+    set pins, 1 [7]     ; Drive high for 1μs (total 3μs high)
+    jmp entry_point
+
+send_zero:
+    set pins, 0 [7]     ; Drive low for 1μs
+    set pins, 0 [7]     ; Drive low for 1μs  
+    set pins, 0 [7]     ; Drive low for 1μs (total 3μs low)
+    set pins, 1 [7]     ; Drive high for 1μs
+    jmp entry_point
+
+; Stop bit transmission (controller response: 2μs low, 1μs high)
+public send_stop:
+    set pins, 0 [7]     ; Drive low for 1μs
+    set pins, 0 [7]     ; Drive low for 1μs (total 2μs low)
+    set pins, 1 [7]     ; Drive high for 1μs
+
+% c-sdk {
+static inline void n64_tx_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = n64_tx_program_get_default_config(offset);
+    sm_config_set_set_pins(&c, pin, 1);
+    sm_config_set_out_pins(&c, pin, 1);
+    sm_config_set_clkdiv(&c, 16.0f);  // 125MHz / 16 = 7.8125MHz
+    
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
+
+
+.program n64_rx
+
+; Simple receive program without side_set to avoid delay limits
+; Receive N64 data by sampling at the right time
+
+public rx_entry:
+    wait 1 pin 0        ; Wait for line to go high (idle state)
+    wait 0 pin 0        ; Wait for falling edge (start of bit)
+    nop [7]             ; Delay to sample in middle of bit
+    
+sample_loop:
+    in pins, 1          ; Sample the pin state
+    wait 1 pin 0        ; Wait for line to go high
+    wait 0 pin 0        ; Wait for next falling edge
+    nop [7]             ; Delay to middle of next bit
+    jmp sample_loop     ; Continue sampling
+
+% c-sdk {
+static inline void n64_rx_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = n64_rx_program_get_default_config(offset);
+    
+    // Set up pins for input
+    sm_config_set_in_pins(&c, pin);
+    
+    // Set up pin directions - input
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+    
+    // Set up ISR (input shift register)
+    sm_config_set_in_shift(&c, false, true, 32); // Shift left, autopush at 32 bits
+    
+    // Set clock divider
+    sm_config_set_clkdiv(&c, 16.0f);
+    
+    // Load the configuration
+    pio_sm_init(pio, sm, offset, &c);
+}
+%} 
