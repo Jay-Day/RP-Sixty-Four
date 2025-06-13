@@ -20,6 +20,8 @@ An RP2040-based Nintendo 64 controller emulator that reads wheel encoders from t
 ### N64 Stick Module
 - Original Nintendo 64 analog stick module with wheel encoders
 - 6-pin JST connector (or equivalent wiring)
+![image](https://github.com/user-attachments/assets/ad451662-a90e-4fe0-9e4c-e4d87ddb7662)
+
 
 ### N64 Controller Connection
 - 3-pin N64 controller connector
